@@ -19,6 +19,10 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Run ClawVet fixture tests
+        shell: bash
+        run: bash tests/clawvet/run-fixtures.sh
+
       - name: Block obvious secret files
         shell: bash
         run: |

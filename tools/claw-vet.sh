@@ -139,11 +139,7 @@ if not findings:
     print("CLEAN:A")
 PYEOF
 else
-  # Fallback: grep for common invisible chars via hex patterns
-  # Limited but better than nothing
-  grep -Pn "[\x{200B}-\x{200F}\x{2028}-\x{202F}\x{FEFF}]" "$TARGET" 2>/dev/null | while IFS=: read -r lnum rest; do
-    echo "FINDING:WARN:${lnum}:Hidden Unicode character detected"
-  done || true
+  echo "FINDING:INFO:0:Python 3 unavailable; hidden Unicode scan skipped"
   echo "CLEAN:A"
 fi | while IFS=: read -r tag sev lnum msg; do
   if [[ "$tag" == "FINDING" ]]; then
@@ -217,8 +213,8 @@ while IFS= read -r line_raw; do
   for pat_sev in "${INJECT_PATTERNS[@]}"; do
     pat="${pat_sev%%:*}"
     sev="${pat_sev##*:}"
-    if echo "$lower_content" | grep -qiP "$pat" 2>/dev/null; then
-      matched=$(echo "$lower_content" | grep -oiP "$pat" | head -1)
+    if echo "$lower_content" | grep -qiE "$pat" 2>/dev/null; then
+      matched=$(echo "$lower_content" | grep -oiE "$pat" | head -1)
       log_finding "$sev" "$lineno" "Prompt injection phrase: \"${matched}\""
       if [[ "$sev" == "CRITICAL" ]]; then
         (( CRITICAL_COUNT++ )) || true
@@ -239,20 +235,20 @@ done < <(grep -n "" "$TARGET" 2>/dev/null || true)
 separator
 echo -e "${BOLD}[C] Dangerous Shell Patterns${RESET}"
 
-declare -A SHELL_PATTERNS=(
-  ["curl[[:space:]]+.*[|][[:space:]]*(bash|sh)"]="CRITICAL"
-  ["wget[[:space:]]+.*[|][[:space:]]*(bash|sh)"]="CRITICAL"
-  ["bash[[:space:]]+-c[[:space:]]"]="CRITICAL"
-  ["sh[[:space:]]+-c[[:space:]]"]="CRITICAL"
-  ["/dev/tcp/"]="CRITICAL"
-  ["eval[[:space:]]*\\("]="CRITICAL"
-  ["eval[[:space:]]+\\$"]="CRITICAL"
-  ["npx[[:space:]]+-y[[:space:]]"]="WARN"
-  ["python[23]?[[:space:]]+-c[[:space:]]"]="WARN"
-  ["exec[[:space:]]*\\([[:space:]]*['\"]"]="WARN"
-  ["base64[[:space:]]+-d.*[|]"]="WARN"
-  ["\\$\\(curl"]="CRITICAL"
-  ["\\$\\(wget"]="CRITICAL"
+SHELL_PATTERNS=(
+  'curl[[:space:]]+.*[|][[:space:]]*(bash|sh):CRITICAL'
+  'wget[[:space:]]+.*[|][[:space:]]*(bash|sh):CRITICAL'
+  'bash[[:space:]]+-c[[:space:]]:CRITICAL'
+  'sh[[:space:]]+-c[[:space:]]:CRITICAL'
+  '/dev/tcp/:CRITICAL'
+  'eval[[:space:]]*\(:CRITICAL'
+  'eval[[:space:]]+\$:CRITICAL'
+  'npx[[:space:]]+-y[[:space:]]:WARN'
+  'python[23]?[[:space:]]+-c[[:space:]]:WARN'
+  'exec[[:space:]]*\([[:space:]]*['\''"]:WARN'
+  'base64[[:space:]]+-d.*[|]:WARN'
+  '\$\(curl:CRITICAL'
+  '\$\(wget:CRITICAL'
 )
 
 C_COUNT=0
@@ -260,11 +256,12 @@ while IFS= read -r line_raw; do
   lineno="${line_raw%%:*}"
   content="${line_raw#*:}"
 
-  for pat in "${!SHELL_PATTERNS[@]}"; do
-    sev="${SHELL_PATTERNS[$pat]}"
-    if echo "$content" | grep -qP "$pat" 2>/dev/null; then
-      snippet=$(echo "$content" | grep -oP ".{0,30}${pat}.{0,30}" 2>/dev/null | head -1 | tr -d '\n' || echo "$content")
-      log_finding "$sev" "$lineno" "Dangerous shell pattern: $(echo "$snippet" | cut -c1-80)"
+  for pat_sev in "${SHELL_PATTERNS[@]}"; do
+    pat="${pat_sev%:*}"
+    sev="${pat_sev##*:}"
+    if echo "$content" | grep -qE "$pat" 2>/dev/null; then
+      snippet=$(echo "$content" | cut -c1-80)
+      log_finding "$sev" "$lineno" "Dangerous shell pattern: $snippet"
       if [[ "$sev" == "CRITICAL" ]]; then
         (( CRITICAL_COUNT++ )) || true
       else
@@ -306,8 +303,8 @@ while IFS= read -r line_raw; do
   content="${line_raw#*:}"
 
   # Check if line contains an HTML comment
-  if echo "$content" | grep -qP '<!--.*-->' 2>/dev/null; then
-    comment_body=$(echo "$content" | grep -oP '<!--.*?-->' | sed 's/<!--//g; s/-->//g')
+  if echo "$content" | grep -qE '<!--.*-->' 2>/dev/null; then
+    comment_body=$(echo "$content" | sed -E 's/.*<!--(.*)-->.*/\1/')
     lower_body=$(echo "$comment_body" | tr '[:upper:]' '[:lower:]')
     for kw in "${COMMENT_INJECT_PATTERNS[@]}"; do
       if echo "$lower_body" | grep -q "$kw"; then
@@ -317,7 +314,7 @@ while IFS= read -r line_raw; do
         break
       fi
     done
-  elif echo "$content" | grep -qP '<!--' 2>/dev/null; then
+  elif echo "$content" | grep -qE '<!--' 2>/dev/null; then
     # Opening comment without close — flag as INFO
     log_finding "INFO" "$lineno" "Unclosed HTML comment start (may span multiple lines)"
     (( INFO_COUNT++ )) || true

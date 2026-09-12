@@ -1,23 +1,23 @@
 # Security Policy
 
-ClawVet scans agent skill files before they are loaded.
+ClawVet scans untrusted agent instruction files, so scanner bugs and misleading verdicts are security-sensitive.
 
-## Supported Versions
+## Supported version
 
-The `main` branch is the supported version.
+The latest commit on `main` is the supported version.
 
-## Reporting A Vulnerability
+## Report a vulnerability privately
 
-Open a GitHub issue with:
+Use [GitHub's private vulnerability reporting form](https://github.com/bchop-studio/clawvet/security/advisories/new).
 
-- the affected file or command
-- the unexpected behavior
-- a minimal sample if possible
+Include the affected command or file, the unexpected behavior, and a minimal reproduction when possible. Do not include real passwords, API keys, private keys, tokens, customer data, or private machine details.
 
-Do not include secrets, private keys, tokens, or private machine details in public issues.
+Do not open a public issue containing exploit details. A normal bug with no security impact can use the public issue tracker.
 
-## Security Notes
+## Security notes
 
-- Review scanner output before trusting a third-party skill.
-- Do not run unknown shell commands copied from untrusted skills.
-- Treat hidden Unicode, prompt injection, and remote shell execution findings as high risk.
+- A `PASS` result means no configured pattern matched. It is not proof that a skill is safe.
+- Review the whole skill directory, not only `SKILL.md`, before installing third-party code.
+- Do not run shell commands copied from an untrusted skill merely because ClawVet did not flag them.
+- Keep agent tools behind narrow permissions, sandboxes, and approval checks.
+- The malicious fixtures use reserved example domains and contain no working credentials.

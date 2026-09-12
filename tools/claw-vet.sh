@@ -28,23 +28,25 @@ WARN_COUNT=0
 INFO_COUNT=0
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+sanitize_text() {
+  LC_ALL=C tr -d '\000-\037\177'
+}
+
 log_finding() {
   local severity="$1"
   local line_num="$2"
-  local message="$3"
+  local message
+  message="$(printf '%s' "$3" | sanitize_text)"
 
   case "$severity" in
     CRITICAL)
-      echo -e "  ${RED}[CRITICAL]${RESET} line ${BOLD}${line_num}${RESET}: ${message}"
-      (( CRITICAL_COUNT++ )) || true
+      printf '  %b[CRITICAL]%b line %b%s%b: %s\n' "$RED" "$RESET" "$BOLD" "$line_num" "$RESET" "$message"
       ;;
     WARN)
-      echo -e "  ${YELLOW}[WARN]${RESET}     line ${BOLD}${line_num}${RESET}: ${message}"
-      (( WARN_COUNT++ )) || true
+      printf '  %b[WARN]%b     line %b%s%b: %s\n' "$YELLOW" "$RESET" "$BOLD" "$line_num" "$RESET" "$message"
       ;;
     INFO)
-      echo -e "  ${CYAN}[INFO]${RESET}     line ${BOLD}${line_num}${RESET}: ${message}"
-      (( INFO_COUNT++ )) || true
+      printf '  %b[INFO]%b     line %b%s%b: %s\n' "$CYAN" "$RESET" "$BOLD" "$line_num" "$RESET" "$message"
       ;;
   esac
 }
@@ -60,21 +62,27 @@ if [[ $# -lt 1 ]]; then
 fi
 
 INPUT="$1"
+DISPLAY_INPUT="$(printf '%s' "$INPUT" | sanitize_text)"
 TMPFILE=""
 
 # ── Fetch or read input ───────────────────────────────────────────────────────
-if [[ "$INPUT" =~ ^https?:// ]]; then
+if [[ "$INPUT" =~ ^[[:alpha:]][[:alnum:]+.-]*:// && ! "$INPUT" =~ ^https:// ]]; then
+  printf '%bERROR: Only HTTPS URLs are accepted: %s%b\n' "$RED" "$DISPLAY_INPUT" "$RESET"
+  exit 2
+fi
+
+if [[ "$INPUT" =~ ^https:// ]]; then
   TMPFILE=$(mktemp /tmp/clawvet-XXXXXX.md)
-  echo -e "${CYAN}Fetching URL: ${INPUT}${RESET}"
-  if ! curl -fsSL --max-time 15 "$INPUT" -o "$TMPFILE" 2>/dev/null; then
-    echo -e "${RED}ERROR: Failed to fetch URL: ${INPUT}${RESET}"
+  printf '%bFetching URL: %s%b\n' "$CYAN" "$DISPLAY_INPUT" "$RESET"
+  if ! curl -fsSL --proto '=https' --proto-redir '=https' --max-time 15 "$INPUT" -o "$TMPFILE" 2>/dev/null; then
+    printf '%bERROR: Failed to fetch URL: %s%b\n' "$RED" "$DISPLAY_INPUT" "$RESET"
     rm -f "$TMPFILE"
     exit 2
   fi
   TARGET="$TMPFILE"
 else
   if [[ ! -f "$INPUT" ]]; then
-    echo -e "${RED}ERROR: File not found: ${INPUT}${RESET}"
+    printf '%bERROR: File not found: %s%b\n' "$RED" "$DISPLAY_INPUT" "$RESET"
     exit 2
   fi
   TARGET="$INPUT"
@@ -85,7 +93,7 @@ echo ""
 echo -e "${BOLD}╔══════════════════════════════════════════════════════╗${RESET}"
 echo -e "${BOLD}║              🔍 ClawVet — SKILL.md Scanner           ║${RESET}"
 echo -e "${BOLD}╚══════════════════════════════════════════════════════╝${RESET}"
-echo -e "  Target: ${BOLD}${INPUT}${RESET}"
+printf '  Target: %b%s%b\n' "$BOLD" "$DISPLAY_INPUT" "$RESET"
 echo ""
 
 # =============================================================================
@@ -97,7 +105,7 @@ echo -e "${BOLD}[A] Hidden/Invisible Unicode Characters${RESET}"
 # Patterns: zero-width space U+200B through U+200F,
 #           line/paragraph separators U+2028–U+202F,
 #           BOM U+FEFF
-# We use Python for reliable Unicode scanning (Python is standard on most systems)
+# We use Python for reliable Unicode scanning.
 if command -v python3 &>/dev/null; then
   python3 - "$TARGET" <<'PYEOF'
 import sys, re
@@ -139,8 +147,7 @@ if not findings:
     print("CLEAN:A")
 PYEOF
 else
-  echo "FINDING:INFO:0:Python 3 unavailable; hidden Unicode scan skipped"
-  echo "CLEAN:A"
+  echo "FINDING:WARN:0:Python 3 unavailable; hidden Unicode scan skipped"
 fi | while IFS=: read -r tag sev lnum msg; do
   if [[ "$tag" == "FINDING" ]]; then
     log_finding "$sev" "$lnum" "$msg"
@@ -176,10 +183,12 @@ with open(filepath, 'r', encoding='utf-8', errors='replace') as f:
 print(f"{count_c}:{count_w}")
 PYEOF2
 )
-  UC_CRIT=$(echo "$UNICODE_FINDINGS" | cut -d: -f1)
-  UC_WARN=$(echo "$UNICODE_FINDINGS" | cut -d: -f2)
+  UC_CRIT=$(printf '%s\n' "$UNICODE_FINDINGS" | cut -d: -f1)
+  UC_WARN=$(printf '%s\n' "$UNICODE_FINDINGS" | cut -d: -f2)
   CRITICAL_COUNT=$(( CRITICAL_COUNT + UC_CRIT ))
   WARN_COUNT=$(( WARN_COUNT + UC_WARN ))
+else
+  WARN_COUNT=$(( WARN_COUNT + 1 ))
 fi
 
 # =============================================================================
@@ -208,13 +217,13 @@ B_COUNT=0
 while IFS= read -r line_raw; do
   lineno="${line_raw%%:*}"
   content="${line_raw#*:}"
-  lower_content=$(echo "$content" | tr '[:upper:]' '[:lower:]')
+  lower_content=$(printf '%s\n' "$content" | tr '[:upper:]' '[:lower:]')
 
   for pat_sev in "${INJECT_PATTERNS[@]}"; do
     pat="${pat_sev%%:*}"
     sev="${pat_sev##*:}"
-    if echo "$lower_content" | grep -qiE "$pat" 2>/dev/null; then
-      matched=$(echo "$lower_content" | grep -oiE "$pat" | head -1)
+    if printf '%s\n' "$lower_content" | grep -qiE "$pat" 2>/dev/null; then
+      matched=$(printf '%s\n' "$lower_content" | grep -oiE "$pat" | head -1)
       log_finding "$sev" "$lineno" "Prompt injection phrase: \"${matched}\""
       if [[ "$sev" == "CRITICAL" ]]; then
         (( CRITICAL_COUNT++ )) || true
@@ -259,8 +268,8 @@ while IFS= read -r line_raw; do
   for pat_sev in "${SHELL_PATTERNS[@]}"; do
     pat="${pat_sev%:*}"
     sev="${pat_sev##*:}"
-    if echo "$content" | grep -qE "$pat" 2>/dev/null; then
-      snippet=$(echo "$content" | cut -c1-80)
+    if printf '%s\n' "$content" | grep -qE "$pat" 2>/dev/null; then
+      snippet=$(printf '%s\n' "$content" | cut -c1-80)
       log_finding "$sev" "$lineno" "Dangerous shell pattern: $snippet"
       if [[ "$sev" == "CRITICAL" ]]; then
         (( CRITICAL_COUNT++ )) || true
@@ -303,18 +312,18 @@ while IFS= read -r line_raw; do
   content="${line_raw#*:}"
 
   # Check if line contains an HTML comment
-  if echo "$content" | grep -qE '<!--.*-->' 2>/dev/null; then
-    comment_body=$(echo "$content" | sed -E 's/.*<!--(.*)-->.*/\1/')
-    lower_body=$(echo "$comment_body" | tr '[:upper:]' '[:lower:]')
+  if printf '%s\n' "$content" | grep -qE '<!--.*-->' 2>/dev/null; then
+    comment_body=$(printf '%s\n' "$content" | sed -E 's/.*<!--(.*)-->.*/\1/')
+    lower_body=$(printf '%s\n' "$comment_body" | tr '[:upper:]' '[:lower:]')
     for kw in "${COMMENT_INJECT_PATTERNS[@]}"; do
-      if echo "$lower_body" | grep -q "$kw"; then
-        log_finding "WARN" "$lineno" "HTML comment contains instruction keyword: \"${kw}\" → $(echo "$comment_body" | cut -c1-60)"
+      if printf '%s\n' "$lower_body" | grep -q "$kw"; then
+        log_finding "WARN" "$lineno" "HTML comment contains instruction keyword: \"${kw}\" → $(printf '%s\n' "$comment_body" | cut -c1-60)"
         (( WARN_COUNT++ )) || true
         (( D_COUNT++ )) || true
         break
       fi
     done
-  elif echo "$content" | grep -qE '<!--' 2>/dev/null; then
+  elif printf '%s\n' "$content" | grep -qE '<!--' 2>/dev/null; then
     # Opening comment without close — flag as INFO
     log_finding "INFO" "$lineno" "Unclosed HTML comment start (may span multiple lines)"
     (( INFO_COUNT++ )) || true
@@ -339,7 +348,7 @@ elif [[ $WARN_COUNT -gt 0 ]]; then
   echo -e "${BOLD}Verdict: ${YELLOW}⚠️  WARN${RESET} — Suspicious content found. Review carefully before loading."
   EXITCODE=1
 else
-  echo -e "${BOLD}Verdict: ${GREEN}✅ PASS${RESET} — No security issues detected."
+  echo -e "${BOLD}Verdict: ${GREEN}✅ PASS${RESET} — No configured patterns detected. Review before loading."
   EXITCODE=0
 fi
 echo ""
